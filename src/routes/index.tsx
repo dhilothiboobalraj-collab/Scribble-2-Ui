@@ -34,6 +34,8 @@ function Index() {
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"preview" | "code">("preview");
   const [refs, setRefs] = useState("");
+  const abort = useRef<AbortController | null>(null);
+  const html = useMemo(() => cleanHtml(raw), [raw]);
 
   async function onFile(f?: File) {
     if (!f) return;
