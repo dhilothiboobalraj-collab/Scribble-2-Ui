@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useRef, useState } from "react";
-import samples from "@/data/samples.json";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -18,14 +17,6 @@ export const Route = createFileRoute("/")({
 
 const THEMES = ["minimalist", "glassmorphism", "neubrutalism", "corporate"] as const;
 
-async function urlToDataUrl(url: string) {
-  const b = await (await fetch(url)).blob();
-  return new Promise<string>((res) => {
-    const r = new FileReader();
-    r.onload = () => res(r.result as string);
-    r.readAsDataURL(b);
-  });
-}
 
 function cleanHtml(raw: string) {
   let s = raw.replace(/<!--S2U_ERROR:[\s\S]*?-->/g, "").replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/, "");
@@ -69,6 +60,7 @@ function Index() {
         signal: ac.signal,
       });
       if (!res.ok || !res.body) throw new Error(await res.text());
+      setRefs((res.headers.get("X-S2U-Refs") ?? "").split(",").join(", "));
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let acc = "";
