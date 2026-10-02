@@ -1,24 +1,216 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useMemo, useRef, useState } from "react";
+import samples from "@/data/samples.json";
 
-// No head() here: the home route inherits title/description/og/twitter from
-// __root.tsx, and ships no og:image so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      { title: "Scribble2UI — Sketch or describe, get a webpage" },
+      { name: "description", content: "Upload a hand-drawn UI sketch or type a description and get a responsive, themed HTML page instantly." },
+      { property: "og:title", content: "Scribble2UI — Sketch to webpage" },
+      { property: "og:description", content: "Hand-drawn mockups and text prompts become editable, themed web pages." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
+  }),
   component: Index,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
+const THEMES = ["minimalist", "glassmorphism", "neubrutalism", "corporate"] as const;
+
+async function urlToDataUrl(url: string) {
+  const b = await (await fetch(url)).blob();
+  return new Promise<string>((res) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result as string);
+    r.readAsDataURL(b);
+  });
+}
+
+function cleanHtml(raw: string) {
+  let s = raw.replace(/<!--S2U_ERROR:[\s\S]*?-->/g, "").replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/, "");
+  const i = s.search(/<!doctype|<html/i);
+  if (i > 0) s = s.slice(i);
+  return s;
+}
+
 function Index() {
+  const [image, setImage] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState("");
+  const [theme, setTheme] = useState<(typeof THEMES)[number]>("minimalist");
+  const [raw, setRaw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [tab, setTab] = useState<"preview" | "code">("preview");
+  const [gallery, setGallery] = useState<"sketches" | "prompts">("sketches");
+  const [q, setQ] = useState("");
+  const abort = useRef<AbortController | null>(null);
+  const html = useMemo(() => cleanHtml(raw), [raw]);
+
+  const filtered = useMemo(() => {
+    const t = q.toLowerCase();
+    return gallery === "sketches"
+      ? samples.sketches.filter((s) => (s.store + s.caption).toLowerCase().includes(t))
+      : samples.prompts.filter((p) => p.prompt.toLowerCase().includes(t));
+  }, [gallery, q]);
+
+  async function onFile(f?: File) {
+    if (!f) return;
+    if (!f.type.startsWith("image/")) return setError("Please choose an image file.");
+    if (f.size > 8_000_000) return setError("Image must be under 8 MB.");
+    const r = new FileReader();
+    r.onload = () => setImage(r.result as string);
+    r.readAsDataURL(f);
+  }
+
+  async function generate() {
+    setError("");
+    if (!image && !prompt.trim()) return setError("Add a sketch, a description, or both.");
+    setBusy(true);
+    setRaw("");
+    setTab("preview");
+    const ac = new AbortController();
+    abort.current = ac;
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image, prompt, theme }),
+        signal: ac.signal,
+      });
+      if (!res.ok || !res.body) throw new Error(await res.text());
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let acc = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        acc += dec.decode(value, { stream: true });
+        setRaw(acc);
+      }
+      const m = acc.match(/<!--S2U_ERROR:([\s\S]*?)-->/);
+      if (m) setError(m[1]);
+    } catch (e) {
+      if (!ac.signal.aborted) setError((e as Error).message || "Generation failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function download() {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    a.download = `scribble2ui-${theme}.html`;
+    a.click();
+  }
+
   return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
+    <div className="paper min-h-screen font-sans text-foreground">
+      <header className="flex items-center justify-between border-b-2 border-border px-6 py-4">
+        <h1 className="font-display text-4xl">
+          Scribble<span className="text-primary">2</span>UI
+        </h1>
+        <p className="hidden text-sm text-muted-foreground md:block">Sketch it. Describe it. Ship it.</p>
+      </header>
+
+      <main className="grid gap-6 p-6 lg:grid-cols-[400px_1fr]">
+        <section className="space-y-5">
+          <div className="sketch-box p-4">
+            <h2 className="font-display text-2xl">1. Sketch</h2>
+            <label className="mt-2 flex min-h-40 cursor-pointer items-center justify-center border-2 border-dashed border-border bg-muted p-2 text-center text-sm text-muted-foreground"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); onFile(e.dataTransfer.files[0]); }}>
+              {image ? <img src={image} alt="Your sketch" className="max-h-56 object-contain" /> : "Drop or click to upload a sketch / screenshot (optional)"}
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
+            </label>
+            {image && <button className="mt-2 text-xs underline" onClick={() => setImage(null)}>Remove sketch</button>}
+          </div>
+
+          <div className="sketch-box p-4">
+            <h2 className="font-display text-2xl">2. Describe</h2>
+            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5}
+              placeholder="e.g. An artisan bakery shop with warm cream tones and pickup time slots…"
+              className="mt-2 w-full border-2 border-input bg-background p-2 text-sm outline-none focus:border-ring" />
+          </div>
+
+          <div className="sketch-box p-4">
+            <h2 className="font-display text-2xl">3. Theme</h2>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              {THEMES.map((t) => (
+                <button key={t} onClick={() => setTheme(t)}
+                  className={`border-2 border-border px-2 py-2 text-sm capitalize ${theme === t ? "bg-accent shadow-[var(--shadow-sketch)]" : "bg-background"}`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <button onClick={generate} disabled={busy}
+              className="flex-1 border-2 border-border bg-primary py-3 font-bold text-primary-foreground shadow-[var(--shadow-sketch)] transition active:translate-x-1 active:translate-y-1 active:shadow-none disabled:opacity-60">
+              {busy ? "Generating…" : "Generate webpage"}
+            </button>
+            {busy && <button onClick={() => abort.current?.abort()} className="border-2 border-border bg-background px-4">Stop</button>}
+          </div>
+          {error && <p className="border-2 border-destructive bg-card p-2 text-sm text-destructive">{error}</p>}
+        </section>
+
+        <section className="sketch-box flex min-h-[600px] flex-col">
+          <div className="flex items-center gap-2 border-b-2 border-border p-2">
+            {(["preview", "code"] as const).map((t) => (
+              <button key={t} onClick={() => setTab(t)} className={`px-3 py-1 text-sm capitalize ${tab === t ? "bg-accent" : ""}`}>{t}</button>
+            ))}
+            <div className="flex-1" />
+            {html && !busy && (
+              <>
+                <button onClick={() => navigator.clipboard.writeText(html)} className="border-2 border-border px-3 py-1 text-sm">Copy</button>
+                <button onClick={download} className="border-2 border-border bg-primary px-3 py-1 text-sm text-primary-foreground">Download HTML</button>
+              </>
+            )}
+          </div>
+          {!raw && !busy ? (
+            <div className="flex flex-1 items-center justify-center p-8 text-center font-display text-3xl text-muted-foreground">
+              Your generated page appears here ✎
+            </div>
+          ) : tab === "preview" ? (
+            <iframe title="Generated page" sandbox="allow-scripts" srcDoc={busy ? html + "</body></html>" : html} className="w-full flex-1 bg-card" />
+          ) : (
+            <pre className="flex-1 overflow-auto bg-foreground p-4 font-mono text-xs text-background">{html || "Waiting for output…"}</pre>
+          )}
+        </section>
+      </main>
+
+      <section className="px-6 pb-10">
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <h2 className="font-display text-3xl">Sample gallery</h2>
+          {(["sketches", "prompts"] as const).map((g) => (
+            <button key={g} onClick={() => setGallery(g)} className={`border-2 border-border px-3 py-1 text-sm capitalize ${gallery === g ? "bg-accent" : "bg-background"}`}>
+              {g} (150)
+            </button>
+          ))}
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" className="border-2 border-input bg-background px-2 py-1 text-sm" />
+        </div>
+        {gallery === "sketches" ? (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
+            {(filtered as typeof samples.sketches).map((s) => (
+              <button key={s.id} title={s.caption} className="sketch-box p-1 text-left"
+                onClick={async () => { setImage(await urlToDataUrl(`/sketches/sketch_${s.id}.png`)); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+                <img src={`/sketches/sketch_${s.id}.png`} alt={s.caption} loading="lazy" className="aspect-[3/4] w-full object-cover object-top" />
+                <p className="truncate p-1 text-xs capitalize">#{s.id} {s.store}</p>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {(filtered as typeof samples.prompts).map((p) => (
+              <button key={p.id} className="sketch-box p-3 text-left text-sm"
+                onClick={() => { setPrompt(p.prompt); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+                <span className="font-mono text-xs text-primary">#{p.id}</span> {p.prompt}
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
