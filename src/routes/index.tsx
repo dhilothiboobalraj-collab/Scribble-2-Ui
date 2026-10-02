@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useRef, useState } from "react";
-import samples from "@/data/samples.json";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -18,14 +17,6 @@ export const Route = createFileRoute("/")({
 
 const THEMES = ["minimalist", "glassmorphism", "neubrutalism", "corporate"] as const;
 
-async function urlToDataUrl(url: string) {
-  const b = await (await fetch(url)).blob();
-  return new Promise<string>((res) => {
-    const r = new FileReader();
-    r.onload = () => res(r.result as string);
-    r.readAsDataURL(b);
-  });
-}
 
 function cleanHtml(raw: string) {
   let s = raw.replace(/<!--S2U_ERROR:[\s\S]*?-->/g, "").replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/, "");
@@ -42,17 +33,9 @@ function Index() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"preview" | "code">("preview");
-  const [gallery, setGallery] = useState<"sketches" | "prompts">("sketches");
-  const [q, setQ] = useState("");
+  const [refs, setRefs] = useState("");
   const abort = useRef<AbortController | null>(null);
   const html = useMemo(() => cleanHtml(raw), [raw]);
-
-  const filtered = useMemo(() => {
-    const t = q.toLowerCase();
-    return gallery === "sketches"
-      ? samples.sketches.filter((s) => (s.store + s.caption).toLowerCase().includes(t))
-      : samples.prompts.filter((p) => p.prompt.toLowerCase().includes(t));
-  }, [gallery, q]);
 
   async function onFile(f?: File) {
     if (!f) return;
@@ -79,6 +62,7 @@ function Index() {
         signal: ac.signal,
       });
       if (!res.ok || !res.body) throw new Error(await res.text());
+      setRefs((res.headers.get("X-S2U-Refs") ?? "").split(",").join(", "));
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let acc = "";
@@ -180,37 +164,11 @@ function Index() {
         </section>
       </main>
 
-      <section className="px-6 pb-10">
-        <div className="mb-3 flex flex-wrap items-center gap-3">
-          <h2 className="font-display text-3xl">Sample gallery</h2>
-          {(["sketches", "prompts"] as const).map((g) => (
-            <button key={g} onClick={() => setGallery(g)} className={`border-2 border-border px-3 py-1 text-sm capitalize ${gallery === g ? "bg-accent" : "bg-background"}`}>
-              {g} (150)
-            </button>
-          ))}
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" className="border-2 border-input bg-background px-2 py-1 text-sm" />
-        </div>
-        {gallery === "sketches" ? (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
-            {(filtered as typeof samples.sketches).map((s) => (
-              <button key={s.id} title={s.caption} className="sketch-box p-1 text-left"
-                onClick={async () => { setImage(await urlToDataUrl(`/sketches/sketch_${s.id}.png`)); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
-                <img src={`/sketches/sketch_${s.id}.png`} alt={s.caption} loading="lazy" className="aspect-[3/4] w-full object-cover object-top" />
-                <p className="truncate p-1 text-xs capitalize">#{s.id} {s.store}</p>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {(filtered as typeof samples.prompts).map((p) => (
-              <button key={p.id} className="sketch-box p-3 text-left text-sm"
-                onClick={() => { setPrompt(p.prompt); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
-                <span className="font-mono text-xs text-primary">#{p.id}</span> {p.prompt}
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
+      {refs && (
+        <p className="px-6 pb-8 text-xs text-muted-foreground">
+          Guided by closest dataset examples: {refs}
+        </p>
+      )}
     </div>
   );
 }
