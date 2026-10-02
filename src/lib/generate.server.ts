@@ -11,7 +11,7 @@ const THEMES: Record<string, string> = {
 };
 
 export async function handleGenerate(request: Request) {
-  const apiKey = process.env.LOVABLE_API_KEY;
+  const apiKey = process.env["LOVABLE_API_KEY"];
   if (!apiKey) return new Response("AI is not configured.", { status: 500 });
   let body: { prompt?: string; image?: string; theme?: string };
   try {
@@ -22,7 +22,7 @@ export async function handleGenerate(request: Request) {
   const prompt = (body.prompt ?? "").slice(0, 4000);
   const image = typeof body.image === "string" && body.image.startsWith("data:image/") ? body.image : undefined;
   if (!prompt.trim() && !image) return new Response("Add a sketch or a description.", { status: 400 });
-  const theme = THEMES[body.theme ?? ""] ?? THEMES.minimalist;
+  const theme = THEMES[body.theme ?? ""] ?? THEMES["minimalist"];
 
   let runId = request.headers.get(RUN) ?? undefined;
   const runFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
