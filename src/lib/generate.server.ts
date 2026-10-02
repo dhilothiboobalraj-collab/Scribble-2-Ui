@@ -39,7 +39,7 @@ export async function handleGenerate(request: Request) {
     fetch: runFetch,
   });
 
-  const content: Exclude<ModelMessage["content"], string> = [];
+  const content: Array<{ type: "text"; text: string } | { type: "image"; image: string }> = [];
   const instr = [
     image
       ? "Convert the attached hand-drawn UI sketch into a real webpage. Detect every element (nav, hero, cards, sidebars, buttons, inputs, text labels) and preserve its layout positions and reading order. Replace X-boxes with real-looking image placeholders from https://picsum.photos with seeds."

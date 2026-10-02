@@ -89,7 +89,7 @@ function Index() {
         setRaw(acc);
       }
       const m = acc.match(/<!--S2U_ERROR:([\s\S]*?)-->/);
-      if (m) setError(m[1]);
+      if (m) setError(m[1] ?? "Generation failed.");
     } catch (e) {
       if (!ac.signal.aborted) setError((e as Error).message || "Generation failed.");
     } finally {
