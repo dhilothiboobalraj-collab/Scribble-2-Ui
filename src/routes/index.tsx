@@ -25,7 +25,36 @@ function cleanHtml(raw: string) {
   return s;
 }
 
+type MatchResult = {
+  analysis: string;
+  matches: Array<{ id: string; store: string; caption: string; image: string; confidence: number; reason: string }>;
+};
+
 function Index() {
+  const [match, setMatch] = useState<MatchResult | null>(null);
+  const [matchErr, setMatchErr] = useState("");
+  const [matching, setMatching] = useState(false);
+
+  async function findMatch() {
+    setMatchErr("");
+    setMatch(null);
+    if (!image && !prompt.trim()) return setMatchErr("Upload a sketch or enter a description first.");
+    setMatching(true);
+    try {
+      const res = await fetch("/api/match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image, prompt }),
+      });
+      const data = await res.json().catch(() => ({ error: `Server error (${res.status}).` }));
+      if (!res.ok) throw new Error(data.error ?? "Matching failed.");
+      setMatch(data as MatchResult);
+    } catch (e) {
+      setMatchErr((e as Error).message || "Matching failed.");
+    } finally {
+      setMatching(false);
+    }
+  }
   const [image, setImage] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const [theme, setTheme] = useState<(typeof THEMES)[number]>("minimalist");
@@ -129,6 +158,10 @@ function Index() {
             </div>
           </div>
 
+          <button onClick={findMatch} disabled={matching}
+            className="w-full border-2 border-border bg-accent py-3 font-bold text-accent-foreground shadow-[var(--shadow-sketch)] transition active:translate-x-1 active:translate-y-1 active:shadow-none disabled:opacity-60">
+            {matching ? "Matching…" : "Find exact match"}
+          </button>
           <div className="flex gap-2">
             <button onClick={generate} disabled={busy}
               className="flex-1 border-2 border-border bg-primary py-3 font-bold text-primary-foreground shadow-[var(--shadow-sketch)] transition active:translate-x-1 active:translate-y-1 active:shadow-none disabled:opacity-60">
@@ -165,9 +198,36 @@ function Index() {
       </main>
 
       {refs && (
-        <p className="px-6 pb-8 text-xs text-muted-foreground">
+        <p className="px-6 pb-4 text-xs text-muted-foreground">
           Guided by closest dataset examples: {refs}
         </p>
+      )}
+
+      {(match || matchErr || matching) && (
+        <section className="px-6 pb-10">
+          <div className="sketch-box p-4">
+            <h2 className="font-display text-3xl">Exact Match</h2>
+            {matching && <p className="mt-2 text-sm text-muted-foreground">AI is analyzing your input…</p>}
+            {matchErr && <p className="mt-2 border-2 border-destructive p-2 text-sm text-destructive">{matchErr}</p>}
+            {match && (
+              <>
+                <p className="mt-2 text-sm">{match.analysis}</p>
+                <div className="mt-4 grid gap-4 md:grid-cols-3">
+                  {match.matches.map((m, i) => (
+                    <div key={m.id} className={`border-2 border-border bg-background p-2 ${i === 0 ? "shadow-[var(--shadow-sketch)]" : ""}`}>
+                      <img src={m.image} alt={m.caption} className="aspect-[3/4] w-full object-cover object-top" />
+                      <div className="mt-2 flex items-center justify-between text-sm">
+                        <span className="font-bold capitalize">{i === 0 ? "Best match · " : ""}#{m.id} {m.store}</span>
+                        <span className="bg-accent px-2 font-mono">{m.confidence}%</span>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{m.reason}</p>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </section>
       )}
     </div>
   );
