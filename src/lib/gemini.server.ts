@@ -45,7 +45,7 @@ export async function* streamGemini(opts: {
     {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      signal: opts.signal,
+      signal: opts.signal ?? null,
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: opts.system }] },
         contents: [{ role: "user", parts: toGeminiParts(opts.parts) }],
