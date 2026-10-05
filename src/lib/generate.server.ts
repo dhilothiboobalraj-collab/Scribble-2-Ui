@@ -1,8 +1,5 @@
-import { createOpenAI } from "@ai-sdk/openai";
-import { streamText, type ModelMessage } from "ai";
 import samples from "@/data/samples.json";
-
-const RUN = "X-Lovable-AIG-Run-ID";
+import { streamGemini, friendlyGeminiError, type Part } from "./gemini.server";
 
 const THEMES: Record<string, string> = {
   minimalist: "Minimalist: generous whitespace, neutral palette, thin borders, elegant sans-serif type.",
@@ -12,8 +9,7 @@ const THEMES: Record<string, string> = {
 };
 
 export async function handleGenerate(request: Request) {
-  const apiKey = process.env["LOVABLE_API_KEY"];
-  if (!apiKey) return new Response("AI is not configured.", { status: 500 });
+  if (!process.env["GEMINI_API_KEY"]) return new Response("GEMINI_API_KEY is not configured on the server.", { status: 500 });
   let body: { prompt?: string; image?: string; theme?: string };
   try {
     body = await request.json();
