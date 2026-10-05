@@ -1,8 +1,5 @@
-import { createOpenAI } from "@ai-sdk/openai";
-import { streamText, type ModelMessage } from "ai";
 import samples from "@/data/samples.json";
-
-const RUN = "X-Lovable-AIG-Run-ID";
+import { streamGemini, friendlyGeminiError, type Part } from "./gemini.server";
 
 const THEMES: Record<string, string> = {
   minimalist: "Minimalist: generous whitespace, neutral palette, thin borders, elegant sans-serif type.",
@@ -12,8 +9,7 @@ const THEMES: Record<string, string> = {
 };
 
 export async function handleGenerate(request: Request) {
-  const apiKey = process.env["LOVABLE_API_KEY"];
-  if (!apiKey) return new Response("AI is not configured.", { status: 500 });
+  if (!process.env["GEMINI_API_KEY"]) return new Response("GEMINI_API_KEY is not configured on the server.", { status: 500 });
   let body: { prompt?: string; image?: string; theme?: string };
   try {
     body = await request.json();
@@ -25,24 +21,9 @@ export async function handleGenerate(request: Request) {
   if (!prompt.trim() && !image) return new Response("Add a sketch or a description.", { status: 400 });
   const theme = THEMES[body.theme ?? ""] ?? THEMES["minimalist"];
 
-  let runId = request.headers.get(RUN) ?? undefined;
-  const runFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const h = new Headers(init?.headers);
-    if (runId && !h.has(RUN)) h.set(RUN, runId);
-    const r = await fetch(input, { ...init, headers: h });
-    runId ??= r.headers.get(RUN) ?? undefined;
-    return r;
-  };
-  const provider = createOpenAI({
-    baseURL: "https://ai.gateway.lovable.dev/v1",
-    apiKey,
-    headers: { "Lovable-API-Key": apiKey, "X-Lovable-AIG-SDK": "vercel-ai-sdk" },
-    fetch: runFetch,
-  });
-
   // Retrieve the closest training examples from the dataset (sketch+caption pairs and shop prompts).
   const refs = retrieve(prompt);
-  const content: Array<{ type: "text"; text: string } | { type: "image"; image: string }> = [];
+  const content: Part[] = [];
   const exampleText = [
     "REFERENCE DATASET EXAMPLES (learn how sketch annotations map to page structure; do not copy them verbatim):",
     ...refs.sketches.map((s) => `- Sketch #${s.id} (${s.store}): ${s.caption}`),
@@ -72,37 +53,19 @@ export async function handleGenerate(request: Request) {
   content.push({ type: "text", text: instr });
   if (image) content.push({ type: "image", image });
 
-  const result = streamText({
-    model: provider.responses("openai/gpt-6-astra"),
-    system:
-      "You are Scribble2UI, an expert front-end engineer. Output ONLY one complete, standalone, responsive HTML5 document using Tailwind via <script src=\"https://cdn.tailwindcss.com\"></script>. Use semantic HTML, realistic copy, accessible contrast, and mobile-friendly layout. No markdown fences, no explanation.",
-    messages: [{ role: "user", content } as ModelMessage],
-    abortSignal: request.signal,
-    maxRetries: 0,
-    providerOptions: {
-      openai: {
-        forceReasoning: true,
-        reasoningEffort: "low",
-        reasoningSummary: "auto",
-        store: false,
-        include: ["reasoning.encrypted_content"],
-      },
-    },
-  });
-
   const enc = new TextEncoder();
   const stream = new ReadableStream({
     async start(c) {
       try {
-        for await (const part of result.fullStream) {
-          if (part.type === "text-delta") c.enqueue(enc.encode(part.text));
-          if (part.type === "error") {
-            const e = part.error as { statusCode?: number; message?: string };
-            c.enqueue(enc.encode(`\n<!--S2U_ERROR:${e?.statusCode === 402 ? "AI credits are used up. Add credits in workspace billing." : e?.statusCode === 429 ? "Too many requests, please wait a moment." : (e?.message ?? "Generation failed.")}-->`));
-          }
-        }
+        for await (const t of streamGemini({
+          system:
+            "You are Scribble2UI, an expert front-end engineer. Output ONLY one complete, standalone, responsive HTML5 document using Tailwind via <script src=\"https://cdn.tailwindcss.com\"></script>. Use semantic HTML, realistic copy, accessible contrast, and mobile-friendly layout. No markdown fences, no explanation.",
+          parts: content,
+          signal: request.signal,
+        }))
+          c.enqueue(enc.encode(t));
       } catch (e) {
-        if (!request.signal.aborted) c.enqueue(enc.encode(`\n<!--S2U_ERROR:${(e as Error).message}-->`));
+        if (!request.signal.aborted) c.enqueue(enc.encode(`\n<!--S2U_ERROR:${friendlyGeminiError(e).message}-->`));
       }
       c.close();
     },
